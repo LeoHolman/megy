@@ -41,6 +41,11 @@ jobs:
       - name: Build app
         run: npm run build
 
+      - name: Add staging host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.STAGING_HOST }}" >> ~/.ssh/known_hosts
+
       - name: Deploy to staging server
         uses: appleboy/ssh-action@v1.0.3
         with:
