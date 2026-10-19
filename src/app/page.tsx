@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { signIn, signOut, useSession } from "next-auth/react";
+import { useEffect, useMemo, useState } from "react";
 
 type ReminderOption = "none" | "at-time" | "1h" | "1d";
 
@@ -25,42 +26,6 @@ type Room = {
   color: string;
   lists: TodoList[];
 };
-
-type UserSession = {
-  email: string;
-  name: string;
-  picture?: string;
-};
-
-function readSavedUser(): UserSession | null {
-  if (typeof window === "undefined") return null;
-  const savedUser = window.localStorage.getItem(SESSION_KEY);
-  if (!savedUser) return null;
-
-  try {
-    return JSON.parse(savedUser) as UserSession;
-  } catch {
-    window.localStorage.removeItem(SESSION_KEY);
-    return null;
-  }
-}
-
-declare global {
-  interface Window {
-    google?: {
-      accounts: {
-        id: {
-          initialize: (config: { client_id: string; callback: (response: { credential?: string }) => void }) => void;
-          renderButton: (element: Element, options: { theme?: string; size?: string; type?: string }) => void;
-          revoke: (hint: string) => void;
-        };
-      };
-    };
-  }
-}
-
-const STORAGE_KEY = "megy-board-v1";
-const SESSION_KEY = "megy-user-session-v1";
 
 const palette = ["#f97316", "#a78bfa", "#22c55e", "#38bdf8", "#f43f5e", "#facc15"];
 
@@ -116,128 +81,63 @@ const reminderLabels: Record<ReminderOption, string> = {
   "1d": "1 day before",
 };
 
-const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "";
-
-function loadStoredBoards(userEmail?: string) {
-  if (typeof window === "undefined") return defaultRooms;
-  const key = userEmail ? `megy-board-${userEmail}` : STORAGE_KEY;
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return defaultRooms;
-    const parsed = JSON.parse(raw) as Room[];
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : defaultRooms;
-  } catch {
-    return defaultRooms;
-  }
-}
-
 export default function Home() {
-  const [user, setUser] = useState<UserSession | null>(() => readSavedUser());
-  const [rooms, setRooms] = useState<Room[]>(() => {
-    const savedUser = readSavedUser();
-    return loadStoredBoards(savedUser?.email);
-  });
-  const [selectedRoomId, setSelectedRoomId] = useState(() => {
-    const savedUser = readSavedUser();
-    const stored = loadStoredBoards(savedUser?.email);
-    return stored[0]?.id ?? defaultRooms[0]?.id ?? "";
-  });
-  const [selectedListId, setSelectedListId] = useState(() => {
-    const savedUser = readSavedUser();
-    const stored = loadStoredBoards(savedUser?.email);
-    return stored[0]?.lists[0]?.id ?? defaultRooms[0]?.lists[0]?.id ?? "";
-  });
+  const { data: session, status } = useSession();
+  const [rooms, setRooms] = useState<Room[]>(defaultRooms);
+  const [selectedRoomId, setSelectedRoomId] = useState(defaultRooms[0]?.id ?? "");
+  const [selectedListId, setSelectedListId] = useState(defaultRooms[0]?.lists[0]?.id ?? "");
   const [newRoomName, setNewRoomName] = useState("");
   const [newRoomColor, setNewRoomColor] = useState(palette[0]);
   const [newListTitle, setNewListTitle] = useState("");
   const [newListColor, setNewListColor] = useState(palette[1]);
-  const [googleReady, setGoogleReady] = useState(false);
-  const googleButtonRef = useRef<HTMLDivElement | null>(null);
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
 
-  function handleDemoSignIn() {
-    const nextUser = { email: "demo@megy.app", name: "Demo User" };
-    setUser(nextUser);
-    const stored = loadStoredBoards(nextUser.email);
-    setRooms(stored);
-    setSelectedRoomId(stored[0]?.id ?? defaultRooms[0].id);
-    setSelectedListId(stored[0]?.lists[0]?.id ?? defaultRooms[0].lists[0]?.id ?? "");
-  }
-
-  function handleGoogleLogin(nextUser: UserSession) {
-    setUser(nextUser);
-    const stored = loadStoredBoards(nextUser.email);
-    setRooms(stored);
-    setSelectedRoomId(stored[0]?.id ?? defaultRooms[0].id);
-    setSelectedListId(stored[0]?.lists[0]?.id ?? defaultRooms[0].lists[0]?.id ?? "");
-  }
-
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const storageKey = user ? `megy-board-${user.email}` : STORAGE_KEY;
-    window.localStorage.setItem(storageKey, JSON.stringify(rooms));
-  }, [rooms, user]);
-
-  useEffect(() => {
-    if (!user && typeof window !== "undefined") {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(rooms));
-    }
-  }, [rooms, user]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (user) {
-      window.localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+    if (status !== "authenticated") {
       return;
     }
-    window.localStorage.removeItem(SESSION_KEY);
-  }, [user]);
 
-  useEffect(() => {
-    if (!googleClientId || typeof window === "undefined") return;
+    let isMounted = true;
 
-    const script = document.createElement("script");
-    script.src = "https://accounts.google.com/gsi/client";
-    script.async = true;
-    script.defer = true;
-    script.onload = () => {
-      if (window.google) {
-        window.google.accounts.id.initialize({
-          client_id: googleClientId,
-          callback: (response) => {
-            if (!response.credential) return;
-            const base64Payload = response.credential.split(".")[1];
-            if (!base64Payload) return;
-            const decoded = JSON.parse(atob(base64Payload));
-            handleGoogleLogin({
-              email: decoded.email,
-              name: decoded.name || decoded.email,
-              picture: decoded.picture,
-            });
-          },
-        });
-        setGoogleReady(true);
-      }
-    };
-    document.body.appendChild(script);
+    fetch("/api/board")
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Unable to load board");
+        }
+        const payload = (await response.json()) as { rooms?: Room[] };
+        const nextRooms = Array.isArray(payload.rooms) && payload.rooms.length > 0 ? payload.rooms : defaultRooms;
+        if (!isMounted) return;
+        setRooms(nextRooms);
+        setSelectedRoomId(nextRooms[0]?.id ?? "");
+        setSelectedListId(nextRooms[0]?.lists[0]?.id ?? "");
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setRooms(defaultRooms);
+        setSelectedRoomId(defaultRooms[0]?.id ?? "");
+        setSelectedListId(defaultRooms[0]?.lists[0]?.id ?? "");
+      });
 
     return () => {
-      script.remove();
+      isMounted = false;
     };
-  }, []);
+  }, [status, session?.user?.email]);
 
   useEffect(() => {
-    if (!googleReady || !googleButtonRef.current || user || !window.google) return;
-    googleButtonRef.current.innerHTML = "";
-    window.google.accounts.id.renderButton(googleButtonRef.current, {
-      theme: "outline",
-      size: "large",
-      type: "standard",
-    });
-  }, [googleReady, user]);
+    if (status !== "authenticated") return;
+    const timeout = window.setTimeout(() => {
+      fetch("/api/board", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rooms }),
+      }).catch(() => undefined);
+    }, 250);
+
+    return () => window.clearTimeout(timeout);
+  }, [rooms, status]);
 
   const selectedRoom = useMemo(
-    () => rooms.find((room) => room.id === selectedRoomId) ?? rooms[0],
+    () => rooms.find((room) => room.id === selectedRoomId) ?? rooms[0] ?? null,
     [rooms, selectedRoomId],
   );
 
@@ -330,7 +230,7 @@ export default function Home() {
     }
   }
 
-  const handleCalendarLink = (item: TodoItem, list: TodoList) => {
+  function handleCalendarLink(item: TodoItem, list: TodoList) {
     const start = item.deadline ? new Date(item.deadline) : new Date();
     const end = new Date(start.getTime() + 60 * 60 * 1000);
     const title = encodeURIComponent(`${list.title}: ${item.text}`);
@@ -338,10 +238,29 @@ export default function Home() {
     const startValue = start.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
     const endValue = end.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
     return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&details=${details}&dates=${startValue}/${endValue}`;
-  };
+  }
+
+  if (status === "loading") {
+    return <main className="app-shell"><div className="signin-panel"><p>Loading your workspace…</p></div></main>;
+  }
+
+  if (status !== "authenticated") {
+    return (
+      <main className="app-shell auth-shell">
+        <section className="signin-panel card">
+          <p className="eyebrow">Private planning</p>
+          <h1>Megy</h1>
+          <p className="signin-copy">Sign in with Google to keep each room, list, and checklist private to your account.</p>
+          <button className="primary-button" onClick={() => signIn("google", { callbackUrl: "/" })}>
+            Continue with Google
+          </button>
+        </section>
+      </main>
+    );
+  }
 
   if (!selectedRoom) {
-    return <div className="app-shell">Loading…</div>;
+    return <main className="app-shell"><div className="signin-panel"><p>Preparing your board…</p></div></main>;
   }
 
   return (
@@ -352,21 +271,14 @@ export default function Home() {
             <p className="eyebrow">Private board</p>
             <h1>Megy</h1>
           </div>
-          {user ? (
-            <div className="user-pill">
-              <span>{user.name[0]}</span>
-              <div>
-                <strong>{user.name}</strong>
-                <small>{user.email}</small>
-              </div>
+          <div className="user-pill">
+            <span>{session?.user?.name?.[0] || "U"}</span>
+            <div>
+              <strong>{session?.user?.name || "User"}</strong>
+              <small>{session?.user?.email || "No email"}</small>
             </div>
-          ) : (
-            <div className="signin-stack">
-              <button className="primary-button" onClick={handleDemoSignIn}>Continue as demo user</button>
-              {googleClientId && <div ref={googleButtonRef} className="google-button-wrap" />}
-              {!googleClientId && <p className="muted">Add NEXT_PUBLIC_GOOGLE_CLIENT_ID to enable real Google Sign-In.</p>}
-            </div>
-          )}
+          </div>
+          <button className="ghost-button full-width" onClick={() => signOut({ callbackUrl: "/" })}>Sign out</button>
         </div>
 
         <div className="room-form card">
