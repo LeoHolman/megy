@@ -3,14 +3,13 @@
 import { signIn, signOut, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
 
-type ReminderOption = "none" | "at-time" | "1h" | "1d";
-
 type TodoItem = {
   id: string;
   text: string;
   done: boolean;
   deadline?: string;
-  reminder?: ReminderOption;
+  roomIds: string[];
+  listIds: Record<string, string>;
 };
 
 type TodoList = {
@@ -40,9 +39,9 @@ const defaultRooms: Room[] = [
         title: "Kitchen",
         color: "#f59e0b",
         items: [
-          { id: "it-1", text: "Deep clean the fridge", done: false, deadline: "2026-10-23T18:00", reminder: "1h" },
-          { id: "it-2", text: "Organize pantry bins", done: true, deadline: "2026-10-21T17:00", reminder: "1d" },
-          { id: "it-3", text: "Label the jars", done: false, deadline: "2026-10-25T12:30", reminder: "none" },
+          { id: "it-1", text: "Deep clean the fridge", done: false, deadline: "2026-10-23T18:00", roomIds: ["room-home"], listIds: { "room-home": "list-kitchen" } },
+          { id: "it-2", text: "Organize pantry bins", done: true, deadline: "2026-10-21T17:00", roomIds: ["room-home"], listIds: { "room-home": "list-kitchen" } },
+          { id: "it-3", text: "Label the jars", done: false, deadline: "2026-10-25T12:30", roomIds: ["room-home"], listIds: { "room-home": "list-kitchen" } },
         ],
       },
       {
@@ -50,8 +49,8 @@ const defaultRooms: Room[] = [
         title: "Laundry",
         color: "#60a5fa",
         items: [
-          { id: "it-4", text: "Wash towels", done: false, deadline: "2026-10-20T09:00", reminder: "at-time" },
-          { id: "it-5", text: "Fold sheets", done: false, deadline: "2026-10-22T16:00", reminder: "1d" },
+          { id: "it-4", text: "Wash towels", done: false, deadline: "2026-10-20T09:00", roomIds: ["room-home"], listIds: { "room-home": "list-laundry" } },
+          { id: "it-5", text: "Fold sheets", done: false, deadline: "2026-10-22T16:00", roomIds: ["room-home"], listIds: { "room-home": "list-laundry" } },
         ],
       },
     ],
@@ -66,24 +65,41 @@ const defaultRooms: Room[] = [
         title: "Projects",
         color: "#0ea5e9",
         items: [
-          { id: "it-6", text: "Review client proposal", done: false, deadline: "2026-10-20T15:00", reminder: "1h" },
-          { id: "it-7", text: "Book design feedback call", done: true, deadline: "2026-10-19T11:30", reminder: "1d" },
+          { id: "it-6", text: "Review client proposal", done: false, deadline: "2026-10-20T15:00", roomIds: ["room-work"], listIds: { "room-work": "list-projects" } },
+          { id: "it-7", text: "Book design feedback call", done: true, deadline: "2026-10-19T11:30", roomIds: ["room-work"], listIds: { "room-work": "list-projects" } },
         ],
       },
     ],
   },
 ];
 
-const reminderLabels: Record<ReminderOption, string> = {
-  none: "No reminder",
-  "at-time": "At deadline",
-  "1h": "1 hour before",
-  "1d": "1 day before",
-};
+function normalizeRooms(inputRooms: Room[]): Room[] {
+  return inputRooms.map((room) => ({
+    ...room,
+    lists: (room.lists ?? []).map((list) => ({
+      ...list,
+      items: (list.items ?? []).map((item) => {
+        const roomIds = Array.isArray(item.roomIds) && item.roomIds.length > 0 ? item.roomIds : [room.id];
+        const listIds = item.listIds && typeof item.listIds === "object" ? { ...item.listIds } : {};
+        if (!listIds[room.id]) {
+          listIds[room.id] = list.id;
+        }
+
+        return {
+          ...item,
+          text: item.text ?? "",
+          done: Boolean(item.done),
+          roomIds,
+          listIds,
+        } satisfies TodoItem;
+      }),
+    })),
+  }));
+}
 
 export default function Home() {
   const { data: session, status } = useSession();
-  const [rooms, setRooms] = useState<Room[]>(defaultRooms);
+  const [rooms, setRooms] = useState<Room[]>(() => normalizeRooms(defaultRooms));
   const [selectedRoomId, setSelectedRoomId] = useState(defaultRooms[0]?.id ?? "");
   const [selectedListId, setSelectedListId] = useState(defaultRooms[0]?.lists[0]?.id ?? "");
   const [newRoomName, setNewRoomName] = useState("");
@@ -105,7 +121,7 @@ export default function Home() {
           throw new Error("Unable to load board");
         }
         const payload = (await response.json()) as { rooms?: Room[] };
-        const nextRooms = Array.isArray(payload.rooms) && payload.rooms.length > 0 ? payload.rooms : defaultRooms;
+        const nextRooms = normalizeRooms(Array.isArray(payload.rooms) && payload.rooms.length > 0 ? payload.rooms : defaultRooms);
         if (!isMounted) return;
         setRooms(nextRooms);
         setSelectedRoomId(nextRooms[0]?.id ?? "");
@@ -113,9 +129,10 @@ export default function Home() {
       })
       .catch(() => {
         if (!isMounted) return;
-        setRooms(defaultRooms);
-        setSelectedRoomId(defaultRooms[0]?.id ?? "");
-        setSelectedListId(defaultRooms[0]?.lists[0]?.id ?? "");
+        const fallbackRooms = normalizeRooms(defaultRooms);
+        setRooms(fallbackRooms);
+        setSelectedRoomId(fallbackRooms[0]?.id ?? "");
+        setSelectedListId(fallbackRooms[0]?.lists[0]?.id ?? "");
       });
 
     return () => {
@@ -141,15 +158,35 @@ export default function Home() {
     [rooms, selectedRoomId],
   );
 
-  const totalRemaining = useMemo(
-    () => rooms.reduce((sum, room) => sum + room.lists.reduce((listTotal, list) => listTotal + list.items.filter((item) => !item.done).length, 0), 0),
-    [rooms],
-  );
+  const totalRemaining = useMemo(() => {
+    const uniqueItemIds = new Set<string>();
+    rooms.forEach((room) => {
+      room.lists.forEach((list) => {
+        list.items.forEach((item) => {
+          if ((item.roomIds ?? []).length > 0 && !item.done) {
+            uniqueItemIds.add(item.id);
+          }
+        });
+      });
+    });
+    return uniqueItemIds.size;
+  }, [rooms]);
 
-  const selectedRoomRemaining = useMemo(
-    () => (selectedRoom ? selectedRoom.lists.reduce((sum, list) => sum + list.items.filter((item) => !item.done).length, 0) : 0),
-    [selectedRoom],
-  );
+  const selectedRoomRemaining = useMemo(() => {
+    if (!selectedRoom) return 0;
+    const uniqueItemIds = new Set<string>();
+    rooms.forEach((room) => {
+      if (room.id !== selectedRoom.id) return;
+      room.lists.forEach((list) => {
+        list.items.forEach((item) => {
+          if ((item.roomIds ?? []).includes(selectedRoom.id) && !item.done) {
+            uniqueItemIds.add(item.id);
+          }
+        });
+      });
+    });
+    return uniqueItemIds.size;
+  }, [rooms, selectedRoom]);
 
   function addRoom() {
     if (!newRoomName.trim()) return;
@@ -191,12 +228,50 @@ export default function Home() {
   function addItem(listId: string, value: string) {
     const text = value.trim();
     if (!text) return;
+    const roomId = rooms.find((room) => room.lists.some((list) => list.id === listId))?.id ?? selectedRoomId;
+    const item: TodoItem = {
+      id: crypto.randomUUID(),
+      text,
+      done: false,
+      roomIds: [roomId],
+      listIds: { [roomId]: listId },
+    };
     setRooms((prev) => prev.map((room) => ({
       ...room,
       lists: room.lists.map((list) => list.id === listId ? {
         ...list,
-        items: [...list.items, { id: crypto.randomUUID(), text, done: false, reminder: "none" }],
+        items: [...list.items, item],
       } : list),
+    })));
+  }
+
+  function toggleRoomTag(itemId: string, listId: string, roomId: string) {
+    setRooms((prev) => prev.map((room) => ({
+      ...room,
+      lists: room.lists.map((list) => {
+        if (list.id !== listId) return list;
+        return {
+          ...list,
+          items: list.items.map((item) => {
+            if (item.id !== itemId) return item;
+            const currentRoomIds = item.roomIds ?? [];
+            const hasRoom = currentRoomIds.includes(roomId);
+            const nextRoomIds = hasRoom ? currentRoomIds.filter((id) => id !== roomId) : [...new Set([...currentRoomIds, roomId])];
+            const nextListIds = { ...item.listIds };
+            if (!hasRoom) {
+              nextListIds[roomId] = listId;
+            } else {
+              delete nextListIds[roomId];
+            }
+
+            return {
+              ...item,
+              roomIds: nextRoomIds,
+              listIds: nextListIds,
+            };
+          }),
+        };
+      }),
     })));
   }
 
@@ -217,7 +292,10 @@ export default function Home() {
   function deleteItem(listId: string, itemId: string) {
     setRooms((prev) => prev.map((room) => ({
       ...room,
-      lists: room.lists.map((list) => list.id === listId ? { ...list, items: list.items.filter((item) => item.id !== itemId) } : list),
+      lists: room.lists.map((list) => ({
+        ...list,
+        items: list.items.filter((item) => item.id !== itemId),
+      })),
     })));
   }
 
@@ -228,16 +306,6 @@ export default function Home() {
       const nextList = selectedRoom.lists.find((list) => list.id !== listId)?.id ?? "";
       setSelectedListId(nextList);
     }
-  }
-
-  function handleCalendarLink(item: TodoItem, list: TodoList) {
-    const start = item.deadline ? new Date(item.deadline) : new Date();
-    const end = new Date(start.getTime() + 60 * 60 * 1000);
-    const title = encodeURIComponent(`${list.title}: ${item.text}`);
-    const details = encodeURIComponent(`Checklist item from ${selectedRoom?.name || "room"}\nReminder: ${reminderLabels[item.reminder || "none"]}`);
-    const startValue = start.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
-    const endValue = end.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
-    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&details=${details}&dates=${startValue}/${endValue}`;
   }
 
   if (status === "loading") {
@@ -315,7 +383,7 @@ export default function Home() {
             >
               <span className="room-dot" style={{ background: room.color }} />
               <span>{room.name}</span>
-              <strong>{room.lists.reduce((sum, list) => sum + list.items.filter((item) => !item.done).length, 0)}</strong>
+              <strong>{room.lists.reduce((sum, list) => sum + list.items.filter((item) => (item.roomIds ?? []).includes(room.id) && !item.done).length, 0)}</strong>
             </button>
           ))}
         </div>
@@ -368,7 +436,9 @@ export default function Home() {
               </div>
 
               <div className="items-stack">
-                {list.items.map((item, index) => (
+                {list.items
+                  .filter((item) => ((item.roomIds ?? []).includes(selectedRoom.id)) && (item.listIds?.[selectedRoom.id] ?? list.id) === list.id)
+                  .map((item, index) => (
                   <div
                     key={item.id}
                     className={`todo-item ${item.done ? "done" : ""}`}
@@ -394,30 +464,22 @@ export default function Home() {
                       />
                       <div className="text-block">
                         <p>{item.text}</p>
-                        <div className="meta-row">
-                          {item.deadline && <span className="meta-chip">Due {new Date(item.deadline).toLocaleString()}</span>}
-                          {item.reminder && item.reminder !== "none" && <span className="meta-chip">{reminderLabels[item.reminder]}</span>}
-                        </div>
                       </div>
                     </div>
 
                     <div className="item-controls">
-                      <input
-                        type="datetime-local"
-                        value={item.deadline ?? ""}
-                        onChange={(event) => updateItem(list.id, item.id, { deadline: event.target.value || undefined })}
-                      />
-                      <select
-                        value={item.reminder ?? "none"}
-                        onChange={(event) => updateItem(list.id, item.id, { reminder: event.target.value as ReminderOption })}
-                      >
-                        {Object.entries(reminderLabels).map(([value, label]) => (
-                          <option key={value} value={value}>{label}</option>
+                      <div className="room-tag-picker">
+                        {rooms.map((room) => (
+                          <label key={room.id} className="tag-toggle">
+                            <input
+                              type="checkbox"
+                              checked={(item.roomIds ?? []).includes(room.id)}
+                              onChange={() => toggleRoomTag(item.id, list.id, room.id)}
+                            />
+                            <span>{room.name}</span>
+                          </label>
                         ))}
-                      </select>
-                      <a href={handleCalendarLink(item, list)} target="_blank" rel="noreferrer" className="calendar-link">
-                        Calendar
-                      </a>
+                      </div>
                       <button type="button" className="delete-item" onClick={() => deleteItem(list.id, item.id)}>×</button>
                     </div>
                   </div>

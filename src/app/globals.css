@@ -420,6 +420,33 @@ select:focus {
   min-width: 0;
 }
 
+.room-tag-picker {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow-x: auto;
+  margin-left: auto;
+}
+
+.tag-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+  color: #334155;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.tag-toggle input {
+  width: 14px;
+  height: 14px;
+  min-height: 14px;
+  margin: 0;
+}
+
 .calendar-link {
   display: inline-flex;
   align-items: center;
