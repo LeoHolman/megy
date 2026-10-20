@@ -236,7 +236,9 @@ select:focus {
   display: block;
   width: 100%;
   height: auto;
-  max-height: 280px;
+  max-height: 340px;
+  overflow: visible;
+  padding: 8px 0;
 }
 
 .room-button {

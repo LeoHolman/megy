@@ -494,10 +494,10 @@ export default function Home() {
           </div>
 
           {rooms.length > 0 ? (() => {
-            const chartSize = 260;
+            const chartSize = 360;
             const center = chartSize / 2;
-            const outerRadius = 92;
-            const labelRadius = 118;
+            const outerRadius = 96;
+            const labelRadius = 136;
             const levels = 5;
 
             const points = rooms.map((room, index) => {
@@ -562,7 +562,8 @@ export default function Home() {
                       textAnchor={Math.abs(Math.cos(angle)) < 0.25 ? "middle" : Math.cos(angle) >= 0 ? "start" : "end"}
                       dominantBaseline="middle"
                       fontSize="11"
-                      fill="#334155"
+                      fill={room.color}
+                      fontWeight="600"
                     >
                       {room.name}
                     </text>
