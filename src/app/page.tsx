@@ -218,10 +218,10 @@ export default function Home() {
   function updateItem(listId: string, itemId: string, patch: Partial<TodoItem>) {
     setRooms((prev) => prev.map((room) => ({
       ...room,
-      lists: room.lists.map((list) => list.id === listId ? {
+      lists: room.lists.map((list) => ({
         ...list,
         items: list.items.map((item) => item.id === itemId ? { ...item, ...patch } : item),
-      } : list),
+      })),
     })));
   }
 
@@ -246,33 +246,120 @@ export default function Home() {
   }
 
   function toggleRoomTag(itemId: string, listId: string, roomId: string) {
-    setRooms((prev) => prev.map((room) => ({
-      ...room,
-      lists: room.lists.map((list) => {
-        if (list.id !== listId) return list;
-        return {
-          ...list,
-          items: list.items.map((item) => {
-            if (item.id !== itemId) return item;
-            const currentRoomIds = item.roomIds ?? [];
-            const hasRoom = currentRoomIds.includes(roomId);
-            const nextRoomIds = hasRoom ? currentRoomIds.filter((id) => id !== roomId) : [...new Set([...currentRoomIds, roomId])];
-            const nextListIds = { ...item.listIds };
-            if (!hasRoom) {
-              nextListIds[roomId] = listId;
-            } else {
-              delete nextListIds[roomId];
-            }
+    setRooms((prev) => {
+      const sourceRoom = prev.find((room) => room.lists.some((list) => list.id === listId));
+      const targetRoom = prev.find((room) => room.id === roomId);
 
+      if (!sourceRoom || !targetRoom || sourceRoom.id === targetRoom.id) {
+        return prev.map((room) => ({
+          ...room,
+          lists: room.lists.map((list) => {
+            if (list.id !== listId) return list;
             return {
-              ...item,
-              roomIds: nextRoomIds,
-              listIds: nextListIds,
+              ...list,
+              items: list.items.map((item) => {
+                if (item.id !== itemId) return item;
+                const currentRoomIds = item.roomIds ?? [];
+                const hasRoom = currentRoomIds.includes(roomId);
+                const nextRoomIds = hasRoom ? currentRoomIds.filter((id) => id !== roomId) : [...new Set([...currentRoomIds, roomId])];
+                const nextListIds = { ...(item.listIds ?? {}) };
+                if (!hasRoom) {
+                  nextListIds[roomId] = listId;
+                } else {
+                  delete nextListIds[roomId];
+                }
+
+                return {
+                  ...item,
+                  roomIds: nextRoomIds,
+                  listIds: nextListIds,
+                };
+              }),
             };
           }),
+        }));
+      }
+
+      const sourceItem = sourceRoom.lists.flatMap((list) => list.items).find((item) => item.id === itemId);
+      if (!sourceItem) return prev;
+
+      const syncedListTitle = sourceRoom.name;
+      const existingSyncedList = targetRoom.lists.find((list) => list.title === syncedListTitle);
+      const syncedListId = existingSyncedList?.id ?? crypto.randomUUID();
+      const syncedListColor = existingSyncedList?.color ?? sourceRoom.color;
+
+      const currentRoomIds = sourceItem.roomIds ?? [];
+      const hasRoom = currentRoomIds.includes(roomId);
+      const nextRoomIds = hasRoom ? currentRoomIds.filter((id) => id !== roomId) : [...new Set([...currentRoomIds, roomId])];
+      const nextListIds = { ...(sourceItem.listIds ?? {}) };
+
+      if (hasRoom) {
+        delete nextListIds[roomId];
+      } else {
+        nextListIds[roomId] = syncedListId;
+      }
+
+      const syncedItem = {
+        ...sourceItem,
+        roomIds: nextRoomIds,
+        listIds: nextListIds,
+      };
+
+      return prev.map((room) => {
+        if (room.id === targetRoom.id) {
+          const targetListExists = room.lists.some((list) => list.title === syncedListTitle);
+          const nextLists = room.lists.map((list) => {
+            if (list.title !== syncedListTitle) {
+              const items = list.items.map((item) => item.id === itemId ? syncedItem : item);
+              return { ...list, items };
+            }
+
+            const items = hasRoom
+              ? list.items.filter((item) => item.id !== itemId)
+              : list.items.some((item) => item.id === itemId)
+                ? list.items.map((item) => item.id === itemId ? syncedItem : item)
+                : [...list.items, syncedItem];
+
+            return { ...list, items };
+          });
+
+          if (!targetListExists && !hasRoom) {
+            return {
+              ...room,
+              lists: [{ id: syncedListId, title: syncedListTitle, color: syncedListColor, items: [syncedItem] }, ...nextLists],
+            };
+          }
+
+          return {
+            ...room,
+            lists: nextLists,
+          };
+        }
+
+        const updatedLists = room.lists.map((list) => ({
+          ...list,
+          items: list.items.map((item) => item.id === itemId ? syncedItem : item),
+        }));
+
+        if (room.id === sourceRoom.id && hasRoom) {
+          return {
+            ...room,
+            lists: updatedLists.map((list) => {
+              if (list.id !== listId) return list;
+              return {
+                ...list,
+                items: list.items.map((item) => item.id === itemId ? syncedItem : item),
+              };
+            }),
+          };
+        }
+
+        return {
+          ...room,
+          lists: updatedLists,
         };
-      }),
-    })));
+      });
+    });
   }
 
   function moveItem(listId: string, fromIndex: number, toIndex: number) {
