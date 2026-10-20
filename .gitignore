@@ -20,6 +20,10 @@
 # production
 /build
 
+# prisma / local sqlite db
+/prisma/*.db
+/prisma/*.db-journal
+
 # misc
 .DS_Store
 *.pem
