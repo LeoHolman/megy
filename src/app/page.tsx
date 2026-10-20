@@ -105,7 +105,7 @@ export default function Home() {
   const [newRoomName, setNewRoomName] = useState("");
   const [newRoomColor, setNewRoomColor] = useState(palette[0]);
   const [newListTitle, setNewListTitle] = useState("");
-  const [newListColor, setNewListColor] = useState(palette[1]);
+  const [newListColor, setNewListColor] = useState(() => defaultRooms[0]?.color ?? palette[1]);
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -158,12 +158,6 @@ export default function Home() {
     [rooms, selectedRoomId],
   );
 
-  useEffect(() => {
-    if (selectedRoom) {
-      setNewListColor(selectedRoom.color);
-    }
-  }, [selectedRoom?.id]);
-
   const roomTaskCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     rooms.forEach((room) => {
@@ -181,7 +175,8 @@ export default function Home() {
     rooms.forEach((room) => {
       room.lists.forEach((list) => {
         list.items.forEach((item) => {
-          if ((item.roomIds ?? []).length > 0 && !item.done) {
+          const roomIds = Array.isArray(item.roomIds) ? item.roomIds : [];
+          if (roomIds.length > 0 && !item.done) {
             uniqueItemIds.add(item.id);
           }
         });
@@ -197,7 +192,8 @@ export default function Home() {
       if (room.id !== selectedRoom.id) return;
       room.lists.forEach((list) => {
         list.items.forEach((item) => {
-          if ((item.roomIds ?? []).includes(selectedRoom.id) && !item.done) {
+          const roomIds = Array.isArray(item.roomIds) ? item.roomIds : [];
+          if (roomIds.includes(selectedRoom.id) && !item.done) {
             uniqueItemIds.add(item.id);
           }
         });
@@ -484,6 +480,7 @@ export default function Home() {
               onClick={() => {
                 setSelectedRoomId(room.id);
                 setSelectedListId(room.lists[0]?.id ?? "");
+                setNewListColor(room.color);
               }}
             >
               <span className="room-dot" style={{ background: room.color }} />
