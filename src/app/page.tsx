@@ -158,6 +158,12 @@ export default function Home() {
     [rooms, selectedRoomId],
   );
 
+  useEffect(() => {
+    if (selectedRoom) {
+      setNewListColor(selectedRoom.color);
+    }
+  }, [selectedRoom?.id]);
+
   const roomTaskCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     rooms.forEach((room) => {
