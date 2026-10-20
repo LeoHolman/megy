@@ -158,6 +158,18 @@ export default function Home() {
     [rooms, selectedRoomId],
   );
 
+  const roomTaskCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    rooms.forEach((room) => {
+      counts[room.id] = room.lists.reduce((sum, list) => {
+        return sum + list.items.filter((item) => (item.roomIds ?? []).includes(room.id)).length;
+      }, 0);
+    });
+    return counts;
+  }, [rooms]);
+
+  const maxRoomTaskCount = useMemo(() => Math.max(1, ...Object.values(roomTaskCounts)), [roomTaskCounts]);
+
   const totalRemaining = useMemo(() => {
     const uniqueItemIds = new Set<string>();
     rooms.forEach((room) => {
@@ -473,6 +485,111 @@ export default function Home() {
               <strong>{room.lists.reduce((sum, list) => sum + list.items.filter((item) => (item.roomIds ?? []).includes(room.id) && !item.done).length, 0)}</strong>
             </button>
           ))}
+        </div>
+
+        <div className="room-chart card">
+          <div className="chart-header">
+            <p className="eyebrow">Room load</p>
+            <h3>Tasks by room</h3>
+          </div>
+
+          {rooms.length > 0 ? (() => {
+            const chartSize = 260;
+            const center = chartSize / 2;
+            const outerRadius = 92;
+            const labelRadius = 118;
+            const levels = 5;
+
+            const points = rooms.map((room, index) => {
+              const value = roomTaskCounts[room.id] ?? 0;
+              const ratio = maxRoomTaskCount > 0 ? value / maxRoomTaskCount : 0;
+              const radians = (Math.PI * 2 * index) / rooms.length - Math.PI / 2;
+              const distance = outerRadius * ratio;
+              const x = center + Math.cos(radians) * distance;
+              const y = center + Math.sin(radians) * distance;
+              const labelX = center + Math.cos(radians) * labelRadius;
+              const labelY = center + Math.sin(radians) * labelRadius;
+
+              return {
+                room,
+                x,
+                y,
+                labelX,
+                labelY,
+                value,
+                angle: radians,
+              };
+            });
+
+            const polygonPoints = points.map(({ x, y }) => `${x},${y}`).join(" ");
+
+            return (
+              <svg className="room-web-chart" viewBox={`0 0 ${chartSize} ${chartSize}`} role="img" aria-label="Room task chart">
+                {[...Array(levels)].map((_, level) => {
+                  const levelRadius = (outerRadius / levels) * (level + 1);
+                  const ringPoints = rooms.map((room, index) => {
+                    const radians = (Math.PI * 2 * index) / rooms.length - Math.PI / 2;
+                    const x = center + Math.cos(radians) * levelRadius;
+                    const y = center + Math.sin(radians) * levelRadius;
+                    return `${x},${y}`;
+                  }).join(" ");
+
+                  return (
+                    <polygon
+                      key={`ring-${level}`}
+                      points={ringPoints}
+                      fill="none"
+                      stroke="rgba(148, 163, 184, 0.65)"
+                      strokeWidth="1"
+                    />
+                  );
+                })}
+
+                {points.map(({ room, x, y, labelX, labelY, angle, value }) => (
+                  <g key={room.id}>
+                    <line
+                      x1={center}
+                      y1={center}
+                      x2={x}
+                      y2={y}
+                      stroke="rgba(148, 163, 184, 0.8)"
+                      strokeWidth="1"
+                    />
+                    <circle cx={x} cy={y} r="4" fill={room.color} />
+                    <text
+                      x={labelX}
+                      y={labelY}
+                      textAnchor={Math.abs(Math.cos(angle)) < 0.25 ? "middle" : Math.cos(angle) >= 0 ? "start" : "end"}
+                      dominantBaseline="middle"
+                      fontSize="11"
+                      fill="#334155"
+                    >
+                      {room.name}
+                    </text>
+                    {value > 0 && (
+                      <text
+                        x={x}
+                        y={y - 10}
+                        textAnchor="middle"
+                        fontSize="10"
+                        fill="#1e293b"
+                        fontWeight="700"
+                      >
+                        {value}
+                      </text>
+                    )}
+                  </g>
+                ))}
+
+                <polygon
+                  points={polygonPoints}
+                  fill="rgba(59, 130, 246, 0.2)"
+                  stroke="#2563eb"
+                  strokeWidth="2"
+                />
+              </svg>
+            );
+          })() : null}
         </div>
       </aside>
 
